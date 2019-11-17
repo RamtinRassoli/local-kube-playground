@@ -3,7 +3,7 @@ A playground to try data science tools on a local Kubernetes cluster.
 
 
 ## Multi-node Kubernetes Cluster
-Minikube doesn't support multi-node clusters, so we can either use a hypervisor (VirtualBox, VMWare, ...) and install everything manually on each MV, or you can use [Kind](https://github.com/kubernetes-sigs/kind) (Kubernetes In Docker) to create the cluster with multiple containers acting as the nodes. Here we go with the latter appraoch (take a look at [medium blog](https://medium.com/@raj10x/multi-node-kubernetes-cluster-with-vagrant-virtualbox-and-kubeadm-9d3eaac28b98) to create a multi-node cluster using VMs):
+Minikube doesn't support multi-node clusters, so we can either use a hypervisor (VirtualBox, VMWare, ...) and install everything manually on each MV, or we can use [Kind](https://github.com/kubernetes-sigs/kind) (Kubernetes In Docker) to create the cluster with multiple containers acting as the nodes. Here we go with the latter appraoch (take a look at [medium blog](https://medium.com/@raj10x/multi-node-kubernetes-cluster-with-vagrant-virtualbox-and-kubeadm-9d3eaac28b98) to create a multi-node cluster using VMs):
 
 1. Install [Kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
 2. Install [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/)
@@ -47,33 +47,35 @@ kube-node-lease   Active   30m
 kube-public       Active   30m
 kube-system       Active   30m
 spark-operator    Active   15s
-foo@bar:~$ kubectl get pods -n spark-operator
 ```
 For more information look at Spark Operator's [quick start's doc](https://github.com/GoogleCloudPlatform/spark-on-k8s-operator/blob/master/docs/quick-start-guide.md). For instance, you can use the example rbac template to set up a simple service account and the RBAC for the Spark Application:
 ```console
-foo@bar:~$ kubectl create -f  spark/spark-rbac.yaml
+foo@bar:~$ kubectl create -f  spark-on-k8s-operator/manifes/spark-rbac.yaml
 ```console
 
 ### Run the example pipeline
-There are some ready examples in spark-operator's repo that you can run:
+There are some examples in spark-operator's repo that you can run:
 ```console
 foo@bar:~$ kubectl create -f  spark-on-k8s-operator/examples/spark-py-pi.yaml
 ```
 
 ### Spark History Server
-Installing the history server is a little bit challenging. If you run one of the examples in spark-operator's repo or take a look at the [architecture](https://github.com/GoogleCloudPlatform/spark-on-k8s-operator/blob/master/docs/architecture-diagram.png) of the operator you realize that the pods that run the spark job have a clear lifecyle. Spark Operator creates the driver and executor pods, they run the job and change their status to _Completed_. When the job is complete you can't access the logs of the job nor the Web UI as they're only accessible while the job is running. 
-So in order to save the logs somwhere that doesn't have the same lifecycle as the pods, we need to ensure that:
+Installing the history server is a little bit challenging. If you run one of the examples in spark-operator's repo or look at the [architecture](https://github.com/GoogleCloudPlatform/spark-on-k8s-operator/blob/master/docs/architecture-diagram.png) of the operator you realize that the pods that run the spark job have a clear lifecyle. Spark Operator creates the driver and executor pods, they run the job and on completion the die and change their status to _Completed_. When the job is completed you can't access the logs of the job nor the Web UI as they're only accessible while the job is running. 
+So in order to save the logs somewhere that doesn't have the same lifecycle as the pods, we need to ensure that:
 1. All the applications store event logs in a specific location (filesystem, s3, hdfs etc).
 2. Deploy the history server in the cluster with access to the event logs location.
 
-In our case we want everything to work locally, so we create an NFS server in our cluster that provides NFS Persistent Volumes that can be used & shared by other pods. Then we install the spark history server and let it read the logs from the shared location in which the spark application stores the event logs (you can use any other persistent volume. There are a lot of examples online explaining how to use cloud storage options like Amazon S3 or Google Cloud Storage).
+In our case we want everything to work locally, so we create an NFS server in our cluster that provides NFS Persistent Volumes which can be used & shared by other pods. Then we install the spark history server and let it read the logs from the shared location in which the spark application store the event logs (you can use any other persistent volume. There are a lot of examples online explaining how to use cloud storage options like Amazon S3 or Google Cloud Storage).
 
 #### NFS Provisioner
-Kubernetes [doesn't](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) have a built-in provisioner for NFS. So we have to set up the NFS server and add it as a provisioner. The following Chart automatically sets up the server as a statefulSet and defines the StorageClass.
+Kubernetes [doesn't](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) have a built-in provisioner for NFS. So we have to set up the NFS server and add it as a provisioner. The following Chart automatically sets up the server as a StatefulSet and defines the StorageClass.
 ```console
 foo@bar:~$ helm install stable/nfs-server-provisioner
 ```
-Note: In Kubernetes 1.16 some api has been changed and at the time of this wriring a lot of Charts have not been updated. So if you get the following error, download the repo and replace `extensions/v1beta2` and `apps/v1beta2` with `apps/v1` as explained [here](https://kubernetes.io/blog/2019/09/18/kubernetes-1-16-release-announcement/).
+Note: In Kubernetes 1.16 some api has been changed and at the time of this writing a lot of Charts have not been updated. So if you get a similar error as following, download the repo and replace `extensions/v1beta2` and `apps/v1beta2` with `apps/v1` as explained [here](https://kubernetes.io/blog/2019/09/18/kubernetes-1-16-release-announcement/). 
+```bash
+Error: validation failed: unable to recognize "": no matches for kind "StatefulSet" in version "apps/v1beta2"
+```
 
 #### PersitentVolumeClaim (PVC)
 Create a [PersistentVolumeClaim](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#persistentvolumeclaims). It has to be on the same namesapce that you installed the NFS server.
@@ -94,7 +96,7 @@ foo@bar:~$ apt-get update
 foo@bar:~$ apt install nfs-kernel-server
 ```
 
-Now we can install the history server:
+Install the history server:
 ```console
 foo@bar:~$ kubectl create -f spark-operator-history-server.yaml
 ```
@@ -111,7 +113,7 @@ If you look at the yaml file, you see how the PVC is added as a volume and mount
           readOnly: true
 ```
 
-Now the history server is running and can show all the logs that are stored in the PVC we defined. The only thing left is to make the new spark jobs store their logs in the same shared volume. So make sure all your spark applications have event logging enabled and at the correct path:
+The history server should be running and able to show all the logs that are stored in the PersistentVolume the PVC defined. The only thing left is to make the new spark jobs store their logs in the same shared volume. So make sure all your spark applications have event logging enabled and at the correct path:
 ```yaml
   sparkConf:
     "spark.eventLog.enabled": "true"
@@ -125,11 +127,11 @@ sparkapplication.sparkoperator.k8s.io/spark-pi created
 foo@bar:~$ kubectl get pods
 NAME                                     READY   STATUS      RESTARTS   AGE
 maudlin-molly-nfs-server-provisioner-0   1/1     Running     0          43m
-spark-history-server-pod      1/1     Running     0          5m13s
+spark-history-server-pod                 1/1     Running     0          5m13s
 spark-pi-driver                          0/1     Completed   0          2m22s
 
 foo@bar:~$ kubectl port-forward spark-history-server-pod 18080:18080
-
+```
 
 
 
